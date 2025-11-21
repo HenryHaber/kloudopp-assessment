@@ -1,7 +1,6 @@
-const {DataTypes, Model} = require('sequelize');
-const {sequelize} = require('../config/database');
-const bcrypt = require('bcrypt');
-const {genSalt} = require('bcrypt');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
+const bcrypt = require('bcryptjs');
 
 
 const User = sequelize.define('User', {
@@ -61,17 +60,22 @@ const User = sequelize.define('User', {
     field: 'is_email_verified'
   },
   emailVerificationToken: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT, // was STRING
     field: 'email_verification_token',
     allowNull: true
   },
   passwordResetToken: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT, // was STRING
     field: 'password_reset_token',
     allowNull: true
   },
+  passwordResetExpires: {
+    type: DataTypes.DATE,
+    field: 'password_reset_expires',
+    allowNull: true
+  },
   refreshToken: {
-    type: DataTypes.STRING,
+    type: DataTypes.TEXT, // was STRING
     field: 'refresh_token',
     allowNull: true
   },
@@ -84,44 +88,27 @@ const User = sequelize.define('User', {
     type: DataTypes.BOOLEAN,
     defaultValue: true,
     field: 'is_active'
-
   }
 }, {
-  tabelName: 'users',
+  tableName: 'users',
   timestamps: true,
   underscored: true,
   indexes: [
-    {
-      unique: true,
-      fields: ['email']
-    },
-    {
-      unique: true,
-      fields: ['google_id'],
-      where: {
-        google_id: {
-          [sequelize.Sequelize.Op.ne]: null
-        }
-      }
-
-    },
-    {
-      fields: ['user_type']
-    },
-    {
-      fields: ['auth_provider']
-    }
+    { unique: true, fields: ['email'] },
+    { unique: true, fields: ['google_id'], where: { google_id: { [sequelize.Sequelize?.Op?.ne]: null } } },
+    { fields: ['user_type'] },
+    { fields: ['auth_provider'] }
   ]
 });
 
 User.hashPassword = async function (password) {
-  const saltRounds = await genSalt(10);
-  return await bcrypt.hash(password, saltRounds);
-}
+  const salt = await bcrypt.genSalt(10);
+  return bcrypt.hash(password, salt);
+};
 
 User.prototype.validatePassword = async function (password) {
-  return await bcrypt.compare(password, this.passwordHash);
-}
+  return bcrypt.compare(password, this.passwordHash);
+};
 
 User.prototype.getPublicProfile = function () {
   return {
@@ -132,11 +119,12 @@ User.prototype.getPublicProfile = function () {
     lastName: this.lastName,
     profilePicture: this.profilePicture,
     isEmailVerified: this.isEmailVerified,
-    lastLogin: this.lastLogin,
+    authProvider: this.authProvider,
     isActive: this.isActive,
+    lastLogin: this.lastLogin,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt
-  }
-}
+  };
+};
 
-module.exports= User
+module.exports = User;

@@ -1,8 +1,7 @@
 const User = require('../models/User');
 const crypto = require('crypto');
-const { sendVerificationEmail, sendPasswordResetEmail} = require('../utils/emailService');
-const { generateAccessToken } = require('../utils//jwt');
-const {verifyRefreshToken} = require('../utils/jwt');
+const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/emailService');
+const { generateTokenPair, verifyRefreshToken } = require('../utils/jwt');
 
 
 const signup = async (req, res) => {
@@ -10,13 +9,13 @@ const signup = async (req, res) => {
     const { email, password, firstName, lastName, userType } = req.body;
     const existingUser = await User.findOne({ where: { email } });
     if (existingUser) {
-      return res.status(400).json({ message: 'Email already in use' });
+      return res.status(400).json({ success: false, message: 'User with this email already exists' });
     }
 
     const passwordHash = await User.hashPassword(password);
     const emailVerificationToken = crypto.randomBytes(32).toString('hex');
 
-    const user  = await User.create({
+    const user = await User.create({
       email,
       passwordHash,
       firstName,
@@ -24,32 +23,33 @@ const signup = async (req, res) => {
       userType,
       emailVerificationToken,
       authProvider: 'local'
-        });
+    });
 
+    let emailSent = true;
     try {
       await sendVerificationEmail(email, emailVerificationToken);
-    }
-    catch (e) {
+    } catch (e) {
       console.error('Error sending verification email:', e.message);
+      emailSent = false;
     }
-    const token = generateAccessToken(user.toJSON()); // Convert user to plain object
 
-    user.refreshToken = token.refreshToken;
-    await  user.save();
+    const { accessToken, refreshToken } = generateTokenPair(user.getPublicProfile());
+    user.refreshToken = refreshToken;
+    await user.save();
 
-    res.status(201).json({
-     status: true,
+    return res.status(201).json({
+      success: true,
       message: 'User registered successfully. Please verify your email.',
+      emailSent,
       data: {
         user: user.getPublicProfile(),
-        accessToken: token.accessToken,
-        refreshToken: token.refreshToken
+        accessToken,
+        refreshToken
       }
     });
-  }
-  catch (e) {
+  } catch (e) {
     console.error('Error during signup:', e);
-    res.status(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'An error occurred during signup', error: e.message });
   }
 }
 const login = async (req, res) => {
@@ -57,37 +57,36 @@ const login = async (req, res) => {
     const { email, password } = req.body;
     const user = await User.findOne({ where: { email } });
 
-    if(!user){
-      return res.status(400).json({ message: 'Invalid email or password' });
+    if (!user) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-    if (!user.isActive){
-      return res.status(403).json({ status: false, message: 'Account is deactivated. Please contact support.' });
+    if (!user.isActive) {
+      return res.status(403).json({ success: false, message: 'Account is deactivated. Please contact support.' });
     }
+
     const isPasswordValid = await user.validatePassword(password);
-    if(!isPasswordValid){
-      return res.status(400).json({status: false, message: 'Invalid email or password' });
+    if (!isPasswordValid) {
+      return res.status(401).json({ success: false, message: 'Invalid email or password' });
     }
 
-
-    const token = generateAccessToken(user.toJSON()); // Convert user to plain object
-    user.refreshToken = token.refreshToken;
+    const { accessToken, refreshToken } = generateTokenPair(user.getPublicProfile());
+    user.refreshToken = refreshToken;
     user.lastLogin = new Date();
     await user.save();
 
-    res.status(200).json({
-     status: true,
+    return res.status(200).json({
+      success: true,
       message: 'Login successful',
       data: {
         user: user.getPublicProfile(),
-        accessToken: token.accessToken,
-        refreshToken: token.refreshToken
+        accessToken,
+        refreshToken
       }
     });
-  }
-  catch (e) {
+  } catch (e) {
     console.error('Login Error:', e);
-    res.status(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'An error occurred during login', error: e.message });
   }
 
 }
@@ -95,52 +94,42 @@ const login = async (req, res) => {
 const refreshToken = async (req, res) => {
   try {
     const { refreshToken } = req.body;
-
-    if (!refreshToken){
-      return res.status(400).json({status: false, message: 'Refresh token is required' });
+    if (!refreshToken) {
+      return res.status(400).json({ success: false, message: 'Refresh token is required' });
     }
-
-    const decoded = verifyRefreshToken(refreshToken);
-
+    let decoded;
+    try { decoded = verifyRefreshToken(refreshToken); } catch (e) {
+      return res.status(401).json({ success: false, message: 'Invalid or expired refresh token' });
+    }
     const user = await User.findByPk(decoded.id);
-    if(!user || user.refreshToken !== refreshToken){
-      return res.status(401).json({status: false, message: 'Invalid refresh token' });
+    if (!user || user.refreshToken !== refreshToken) {
+      return res.status(401).json({ success: false, message: 'Invalid refresh token' });
     }
-
-    const token = generateAccessToken(user.toJSON()); // Convert user to plain object
-    user.refreshToken = token.refreshToken;
+    const basePayload = user.getPublicProfile ? user.getPublicProfile() : { id: user.id, email: user.email, userType: user.userType };
+    const { accessToken, refreshToken: newRefreshToken } = generateTokenPair(basePayload);
+    user.refreshToken = newRefreshToken;
     await user.save();
-    res.json({
-     status: true,
-      message: 'Token refreshed successfully',
-      data: {
-        accessToken: token.accessToken,
-        refreshToken: token.refreshToken
-      }
-    });
-  }
-  catch (e) {
+    return res.json({ success: true, message: 'Token refreshed successfully', data: { accessToken, refreshToken: newRefreshToken } });
+  } catch (e) {
     console.error('Refresh Token Error:', e);
-    res.status(500).json({status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'An error occurred during token refresh' });
   }
 }
 
 const logout = async (req, res) => {
-
   try {
-      const userId = req.user.id;
-
+    const userId = req.user?.id;
+    if (userId) {
       const user = await User.findByPk(userId);
-      if (user){
+      if (user) {
         user.refreshToken = null;
         await user.save();
       }
-
-      res.status(200).json({ status: true, message: 'Logout successful' });
-  }
-  catch (e) {
+    }
+    return res.json({ success: true, message: 'Logout successful' });
+  } catch (e) {
     console.error('Logout Error:', e);
-    res.status(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'An error occurred during logout', error: e.message });
   }
 
 }
@@ -148,26 +137,23 @@ const logout = async (req, res) => {
 const verifyEmail = async (req, res) => {
   try {
     const token = req.query.token;
-    if (!token){
-      return res.status(400).json({ status: false, message: 'Verification token is required' });
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Verification token is required' });
     }
 
     const user = await User.findOne({ where: { emailVerificationToken: token } });
-    if (!user){
-      return res.status(400).json({ status: false, message: 'Invalid verification token' });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid verification token' });
     }
-
 
     user.isEmailVerified = true;
     user.emailVerificationToken = null;
     await user.save();
 
-    res.json({ status: true, message: 'Email verified successfully' });
-  }
-  catch (e) {
-
+    return res.json({ success: true, message: 'Email verified successfully' });
+  } catch (e) {
     console.error('Email Verification Error:', e);
-    res.status(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', error: e.message });
   }
 }
 
@@ -175,23 +161,29 @@ const requestPasswordReset = async (req, res) => {
   try {
     const { email } = req.body;
     const user = await User.findOne({ where: { email } });
-    if (!user){
-      return res.status(400).json({ status: false, message: 'No account found with that email' });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'No account found with that email' });
     }
 
     const resetToken = crypto.randomBytes(32).toString('hex');
-    const resetExpiry = Date.now() + 3600000;
+    const resetExpiry = Date.now() + 3600000; // 1 hour
 
     user.passwordResetToken = resetToken;
     user.passwordResetExpires = resetExpiry;
     await user.save();
 
-    await sendPasswordResetEmail(email, resetToken);
-    res.json({ status: true, message: 'Password reset email sent' });
-  }
-  catch (e){
+    let emailSent = true;
+    try {
+      await sendPasswordResetEmail(email, resetToken);
+    } catch (e) {
+      console.error('Password Reset Email Error:', e.message);
+      emailSent = false;
+    }
+
+    return res.json({ success: true, message: 'Password reset email sent', emailSent });
+  } catch (e) {
     console.error('Password Reset Request Error:', e);
-    res.status(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', error: e.message });
   }
 }
 
@@ -200,8 +192,8 @@ const resetPassword = async (req, res) => {
     const { token, newPassword } = req.body;
 
     const user = await User.findOne({ where: { passwordResetToken: token } });
-    if (!user){
-      return res.status(400).json({ status: false, message: 'Invalid or expired password reset token' });
+    if (!user) {
+      return res.status(400).json({ success: false, message: 'Invalid or expired password reset token' });
     }
 
     user.passwordHash = await User.hashPassword(newPassword);
@@ -210,31 +202,28 @@ const resetPassword = async (req, res) => {
     user.refreshToken = null;
     await user.save();
 
-    res.json({ status: true, message: 'Password reset successful. Please log in with your new password.' });
-  }
-  catch (e) {
+    return res.json({ success: true, message: 'Password reset successful. Please log in with your new password.' });
+  } catch (e) {
     console.error('Password Reset Error:', e);
-    res.json(500).json({ status: false, message: 'Internal server error', error: e.message });
+    return res.status(500).json({ success: false, message: 'Internal server error', error: e.message });
   }
 }
 
 const googleCallback = async (req, res) => {
-
   try {
     const user = req.user;
-    const token = generateAccessToken(user.toJSON()); // Convert user to plain object
+    const { accessToken, refreshToken } = generateTokenPair(user.getPublicProfile());
 
-    user.refreshToken = token.refreshToken;
+    user.refreshToken = refreshToken;
     await user.save();
 
-    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?accessToken=${token.accessToken}&refreshToken=${token.refreshToken}`;
-    res.redirect(redirectUrl);
+    const redirectUrl = `${process.env.CLIENT_URL}/auth/callback?accessToken=${accessToken}&refreshToken=${refreshToken}`;
+    return res.redirect(redirectUrl);
+  } catch (e) {
+    console.error('Google OAuth Callback Error:', e);
+    return res.redirect(`${process.env.CLIENT_URL}/auth/callback?error=Internal server error`);
   }
-  catch (e) {
-      console.error('Google OAuth Callback Error:', e);
-      res.redirect(`${process.env.CLIENT_URL}/auth/callback?error=Internal server error`);
-  }
-}
+};
 
 module.exports = {
   signup,

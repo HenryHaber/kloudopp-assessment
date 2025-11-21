@@ -1,22 +1,21 @@
 const nodeMailer = require('nodemailer');
-require('dotenv').config();
+const env = require('../config/env');
 
 const transporter = nodeMailer.createTransport({
-    host: process.env.EMAIL_HOST,
-    port: process.env.EMAIL_PORT,
+    host: env.EMAIL_HOST,
+    port: env.EMAIL_PORT,
     service: "gmail",
     secure: false,
     auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASSWORD
+        user: env.EMAIL_USER,
+        pass: env.EMAIL_PASSWORD
      }
    })
 
 const sendVerificationEmail = async (email, token) => {
-  const verificationLink = `${process.env.CLIENT_URL}/api/auth/verify-email?token=${token}`;
+  const verificationLink = `${env.CLIENT_URL}/api/auth/verify-email?token=${token}`;
   const mailOptions = {
-
-    from: process.env.EMAIL_FROM,
+    from: env.EMAIL_FROM,
     to: email,
     subject: 'Email Verification',
     html: `<p>Please verify your email by clicking the link below:</p>
@@ -32,12 +31,11 @@ const sendVerificationEmail = async (email, token) => {
     console.error('Error sending verification email:', e);
     return false
   }
-
 }
 const sendPasswordResetEmail = async (to, token) => {
-  const resetLink = `${process.env.CLIENT_URL}/reset-password?token=${token}`;
+  const resetLink = `${env.CLIENT_URL}/reset-password?token=${token}`;
   const mailOptions = {
-    from: process.env.EMAIL_FROM,
+    from: env.EMAIL_FROM,
     to,
     subject: 'Password Reset Request',
     html: `<p>You requested a password reset. Click the link below to reset your password:</p>

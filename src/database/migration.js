@@ -1,20 +1,13 @@
 const {sequelize} = require('../config/database');
-require('dotenv').config();
-
+const env = require('../config/env');
 
 const runMigrations = async () => {
   try {
     await sequelize.authenticate();
     console.log('Database connection established successfully.');
-
-    // Run migrations
-    await sequelize.sync({force: process.env.FORCE_SYNC === 'true'});
+    await sequelize.sync({force: env.FORCE_SYNC === 'true'});
     console.log('Running migrations...');
-
-    // Here you would typically use a migration tool like Sequelize CLI or Umzug
-    // For demonstration, we will just log that migrations are run
     console.log('Migrations completed successfully.');
-
     process.exit(0)
   } catch (error) {
     console.error('Error running migrations:', error.message);
@@ -23,7 +16,6 @@ const runMigrations = async () => {
     await sequelize.close();
   }
 }
-
 
 
 runMigrations()
